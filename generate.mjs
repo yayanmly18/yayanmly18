@@ -26,8 +26,8 @@ const GRID_X = 20;
 const GRID_Y = 15;
 const WIDTH = 513;
 const HEIGHT = 170;
-const JET_X_START = 35;
-const JET_X_END = 478;
+const JET_X_START = 25.5;  // pusat kolom 0
+const JET_X_END = 487.5;   // pusat kolom 33
 const LOOP_DUR = 20; // seconds, one full there-and-back pass
 const MAX_TARGETS = 12; // how many "busiest" days the jet fires on
 const FLASH_COLOR = "#39d353";
@@ -119,10 +119,18 @@ function pickTargets(cells) {
 
 // Map a column index to the keyTime fraction along ONE direction of travel
 // (forward pass spans keyTime 0 -> 0.5, backward spans 0.5 -> 1).
+// The jet moves linearly from JET_X_START to JET_X_END over keyTime 0->0.5,
+// so we compute the exact keyTime where the jet's x equals the column center.
 function keyTimeForCol(col, direction) {
-  const span = 0.46; // leave a little headroom at both ends
-  const t = 0.02 + (col / (COLS - 1)) * span;
-  return direction === "forward" ? t : 1 - t;
+  const colCenterX = GRID_X + col * STEP + CELL / 2;
+  const span = JET_X_END - JET_X_START;
+  if (direction === "forward") {
+    // x = JET_X_START + span * (t / 0.5)  =>  t = 0.5 * (x - JET_X_START) / span
+    return 0.5 * (colCenterX - JET_X_START) / span;
+  } else {
+    // x = JET_X_END - span * ((t - 0.5) / 0.5)  =>  t = 0.5 + 0.5 * (JET_X_END - x) / span
+    return 0.5 + 0.5 * (JET_X_END - colCenterX) / span;
+  }
 }
 
 function fmt(n) {
@@ -143,9 +151,14 @@ function buildGrid(cells, targets) {
     const tBack = keyTimeForCol(c.col, "backward");
     const [t1, t2] = [Math.min(tFwd, tBack), Math.max(tFwd, tBack)];
     const dur = 0.006;
+    // Clamp keyTimes to [0, 1] to avoid invalid SVG values
+    const k1 = Math.max(0, t1);
+    const k2 = Math.min(1, t1 + dur);
+    const k3 = Math.max(0, Math.min(1, t2));
+    const k4 = Math.min(1, t2 + dur);
     svg += `<rect x="${c.x.toFixed(2)}" y="${c.y.toFixed(2)}" width="${CELL}" height="${CELL}" rx="2" ry="2" fill="${c.color}">` +
       `<animate attributeName="fill" dur="${LOOP_DUR}s" repeatCount="indefinite" ` +
-      `keyTimes="0;${fmt(t1)};${fmt(t1 + dur)};${fmt(t2)};${fmt(t2 + dur)};1" ` +
+      `keyTimes="0;${fmt(k1)};${fmt(k2)};${fmt(k3)};${fmt(k4)};1" ` +
       `values="${c.color};${c.color};${FLASH_COLOR};${c.color};${FLASH_COLOR};${c.color}"/>` +
       `</rect>\n`;
   }
@@ -161,10 +174,11 @@ function buildBulletsAndBlasts(targets) {
     const ordered = dir === "forward" ? targets : [...targets].reverse();
     for (const c of ordered) {
       const t = keyTimeForCol(c.col, dir);
-      const rise = t - dur * 3;
-      const arrive = t;
-      const fadeStart = t;
-      const fadeEnd = t + dur;
+      // Ensure rise < arrive < fadeEnd < 1 for valid SVG keyTimes
+      const rise = Math.max(0.001, t - dur * 3);
+      const arrive = Math.max(rise + 0.001, Math.min(0.999, t));
+      const fadeEnd = Math.min(0.999, arrive + dur);
+      const blastEnd = Math.min(0.999, arrive + dur * 3);
       const cx = fmt(c.x + CELL / 2);
       const targetY = fmt(c.y + CELL / 2);
 
@@ -177,9 +191,9 @@ function buildBulletsAndBlasts(targets) {
 
       blasts += `<circle cx="${cx}" cy="${targetY}" r="0" fill="none" stroke="${BLAST_COLOR}" stroke-width="1.6" opacity="0">` +
         `<animate attributeName="r" dur="${LOOP_DUR}s" repeatCount="indefinite" ` +
-        `keyTimes="0;${fmt(arrive)};${fmt(arrive + dur * 3)};1" values="0;1;9;9"/>` +
+        `keyTimes="0;${fmt(arrive)};${fmt(blastEnd)};1" values="0;1;9;9"/>` +
         `<animate attributeName="opacity" dur="${LOOP_DUR}s" repeatCount="indefinite" ` +
-        `keyTimes="0;${fmt(arrive)};${fmt(arrive + dur * 3)};1" values="0;1;1;0"/>` +
+        `keyTimes="0;${fmt(arrive)};${fmt(blastEnd)};1" values="0;1;1;0"/>` +
         `</circle>\n`;
     }
   }
@@ -211,7 +225,7 @@ function buildJet() {
   <animateTransform attributeName="transform" attributeType="XML" type="translate"
     dur="${LOOP_DUR}s" repeatCount="indefinite"
     keyTimes="0;0.5;1"
-    values="${JET_X_START}.00,140.00;${JET_X_END}.00,140.00;${JET_X_START}.00,140.00"/>
+    values="${JET_X_START},140;${JET_X_END},140;${JET_X_START},140"/>
 </g>`;
 }
 
